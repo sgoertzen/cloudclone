@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CloudClone</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1d2330; --muted:#6a7385; --line:#e1e4ea; --accent:#2f6fed; --ok:#1f9d55; --bad:#d64545; --warn:#c98a0a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171d; --card:#1d222b; --text:#e6e9ef; --muted:#8c95a7; --line:#2d3441; --accent:#5b8cff; --ok:#3ecf7e; --bad:#ff6b6b; --warn:#e8b339; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui,-apple-system,sans-serif; }
+  header { display:flex; align-items:center; justify-content:space-between; padding:14px 24px; border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { font-size:18px; margin:0; }
+  main { max-width:860px; min-width:0; margin:24px auto; padding:0 16px; display:grid; gap:16px; }
+  .card { min-width:0; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .grow { flex:1; }
+  .muted { color:var(--muted); font-size:13px; }
+  h2 { margin:0; font-size:16px; }
+  button { font:inherit; padding:7px 14px; border-radius:7px; border:1px solid var(--line); background:var(--card); color:var(--text); cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { color:var(--bad); }
+  button:disabled { opacity:.5; cursor:default; }
+  input, select { font:inherit; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--bg); color:var(--text); }
+  input[type=text], input[type=password] { width:100%; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 3px; }
+  .badge { font-size:12px; padding:2px 8px; border-radius:99px; border:1px solid var(--line); }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+  .bar { height:12px; background:var(--bg); border:1px solid var(--line); border-radius:99px; overflow:hidden; margin:10px 0 6px; }
+  .bar > div { height:100%; background:var(--accent); transition:width .6s ease; }
+  .bar.indet > div { width:30% !important; animation:slide 1.2s infinite ease-in-out; }
+  @keyframes slide { 0% { margin-left:-30%; } 100% { margin-left:100%; } }
+  .files { font-size:12px; color:var(--muted); font-family:ui-monospace,monospace; white-space:normal; overflow-wrap:anywhere; }
+  details { margin-top:10px; } summary { cursor:pointer; color:var(--accent); font-size:13px; }
+  pre { background:var(--bg); border:1px solid var(--line); border-radius:7px; padding:10px; overflow:auto; font-size:12px; max-height:180px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  #modal { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:10; padding:16px; }
+  #modal .box { background:var(--card); border:1px solid var(--line); border-radius:10px; width:100%; max-width:560px; max-height:85vh; display:flex; flex-direction:column; }
+  #modal .box > * { padding:14px 18px; } #modal .tree { overflow:auto; flex:1; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .node { display:flex; align-items:center; gap:6px; padding:3px 0; } .kids { margin-left:22px; }
+  .twisty { width:18px; cursor:pointer; color:var(--muted); user-select:none; text-align:center; }
+  .hidden { display:none !important; }
+  #login { max-width:340px; margin:80px auto; }
+  .err { color:var(--bad); font-size:13px; min-height:18px; margin-top:8px; }
+  ol { padding-left:20px; margin:6px 0; } li { margin:3px 0; }
+  code { background:var(--bg); padding:1px 5px; border-radius:4px; font-size:12px; }
+</style>
+</head>
+<body>
+<header><h1>CloudClone</h1><button id="logout" class="hidden">Log out</button></header>
+
+<div id="login" class="card hidden">
+  <h2 id="login-title">Log in</h2>
+  <p class="muted" id="login-hint"></p>
+  <label>Password</label><input type="password" id="pw">
+  <div class="err" id="login-err"></div>
+  <button class="primary" id="login-btn">Continue</button>
+</div>
+
+<main id="app" class="hidden">
+  <div id="accounts" class="row" style="display:grid;gap:16px"></div>
+
+  <div class="card">
+    <div class="row"><h2 class="grow">Add Google account</h2><button id="toggle-add">Add…</button></div>
+    <div id="add-form" class="hidden">
+      <details open>
+        <summary>How to get a Client ID &amp; Secret (one-time, ~5 min)</summary>
+        <ol class="muted">
+          <li>Open <b>console.cloud.google.com</b>, create a project, and enable the <b>Google Drive API</b>.</li>
+          <li><b>OAuth consent screen</b>: choose External, add yourself as a test user, then <b>Publish app</b> to stay out of "Testing" (tokens in Testing expire after 7 days).</li>
+          <li id="help-type"></li>
+          <li>Paste the Client ID and Secret below. The container only ever requests <b>read-only</b> Drive access.</li>
+        </ol>
+      </details>
+      <label>Name (also the backup sub-folder)</label><input type="text" id="a-name" placeholder="personal">
+      <div id="creds">
+        <label>Client ID</label><input type="text" id="a-cid">
+        <label>Client Secret</label><input type="password" id="a-secret">
+        <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="a-default" checked> Save as default for future accounts</label>
+      </div>
+      <div class="muted hidden" id="creds-saved">Using the saved Client ID &amp; Secret. <a href="#" onclick="$('#creds').dataset.forced=1;$('#creds').classList.remove('hidden');$('#creds-saved').classList.add('hidden');return false">Use different ones</a></div>
+      <label>Shared Drive ID (optional — leave blank for My Drive)</label><input type="text" id="a-team">
+      <div class="err" id="add-err"></div>
+      <button class="primary" id="add-btn">Create</button>
+    </div>
+  </div>
+</main>
+
+<div id="modal" class="hidden"><div class="box"><div><h2>Choose folders to back up</h2><div class="muted">Pick top-level or nested folders. Selecting a folder includes everything inside it. Leave nothing selected to back up the whole Drive.</div></div><div class="tree" id="tree"></div><div class="row"><span class="muted grow" id="pick-count"></span><button onclick="closePicker()">Cancel</button><button class="primary" onclick="savePicker()">Save</button></div></div></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = async (path, method = 'GET', body) => {
+  const r = await fetch('/api' + path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 401 && path !== '/login') { showLogin(); throw new Error('auth'); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+};
+const fmtBytes = n => { if (!n) return '0 B'; const u = ['B','KB','MB','GB','TB']; const i = Math.min(4, Math.floor(Math.log(n) / Math.log(1024))); return (n / 1024 ** i).toFixed(i ? 1 : 0) + ' ' + u[i]; };
+const fmtDate = s => s ? new Date(s).toLocaleString() : '—';
+const fmtEta = s => s == null ? '' : s > 3600 ? Math.floor(s/3600) + 'h ' + Math.floor(s%3600/60) + 'm' : s > 60 ? Math.floor(s/60) + 'm ' + (s%60) + 's' : s + 's';
+const days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let mode = 'login', polling = null, lastSig = null, lastState = null;
+
+function showLogin() {
+  clearInterval(polling); $('#app').classList.add('hidden'); $('#logout').classList.add('hidden'); $('#login').classList.remove('hidden');
+}
+async function init() {
+  const s = await api('/session');
+  if (s.authed) return showApp();
+  mode = s.configured ? 'login' : 'setup';
+  $('#login-title').textContent = mode === 'setup' ? 'Set a password' : 'Log in';
+  $('#login-hint').textContent = mode === 'setup' ? 'First run: choose a password (8+ characters) to protect this page.' : '';
+  showLogin();
+}
+function showApp() {
+  $('#login').classList.add('hidden'); $('#app').classList.remove('hidden'); $('#logout').classList.remove('hidden');
+  refresh(); polling = setInterval(refresh, 1500);
+}
+$('#login-btn').onclick = async () => {
+  try { await api(mode === 'setup' ? '/setup' : '/login', 'POST', { password: $('#pw').value }); $('#pw').value = ''; showApp(); }
+  catch (e) { $('#login-err').textContent = e.message; }
+};
+$('#pw').onkeydown = e => { if (e.key === 'Enter') $('#login-btn').click(); };
+$('#logout').onclick = async () => { await api('/logout', 'POST'); init(); };
+$('#toggle-add').onclick = () => $('#add-form').classList.toggle('hidden');
+$('#add-btn').onclick = async () => {
+  try {
+    await api('/accounts', 'POST', { name: $('#a-name').value, client_id: $('#a-cid').value, client_secret: $('#a-secret').value, save_as_default: $('#a-default').checked, shared_drive_id: $('#a-team').value });
+    ['#a-name','#a-cid','#a-secret','#a-team'].forEach(i => $(i).value = ''); $('#add-err').textContent = ''; $('#add-form').classList.add('hidden'); refresh();
+  } catch (e) { $('#add-err').textContent = e.message; }
+};
+
+async function refresh() {
+  try { lastState = await api('/state'); } catch { return; }
+  // Don't clobber a card while the user is typing in it.
+  const hasDef = lastState.has_default_client;
+  $('#creds').classList.toggle('hidden', hasDef && !$('#creds').dataset.forced);
+  $('#creds-saved').classList.toggle('hidden', !hasDef || !!$('#creds').dataset.forced);
+  $('#help-type').innerHTML = lastState.direct_oauth
+    ? `<b>Credentials → Create credentials → OAuth client ID</b> → type <b>Web application</b>, with Authorized redirect URI <code>${esc(lastState.redirect_uri)}</code>.`
+    : '<b>Credentials → Create credentials → OAuth client ID</b> → type <b>Desktop app</b>.';
+  const cur = lastState.run.current;
+  const sig = JSON.stringify([lastState.accounts, lastState.run.queued, cur && cur.account_id]);
+  const active = document.activeElement;
+  const typing = active && active.closest('#accounts') && /INPUT|SELECT/.test(active.tagName);
+  if (sig !== lastSig && !typing) { lastSig = sig; render(lastState); }
+  else if (cur) { const el = $('#prog-' + cur.account_id); if (el) el.innerHTML = progress(cur); }
+}
+
+function render(st) {
+  const cur = st.run.current;
+  const html = st.accounts.map(a => card(a, st, cur)).join('') || '<div class="card muted">No accounts yet. Add a Google account below.</div>';
+  $('#accounts').innerHTML = html;
+}
+
+function card(a, st, cur) {
+  const running = cur && cur.account_id === a.id;
+  const queued = st.run.queued.includes(a.id);
+  const lr = a.last_run;
+  let status;
+  if (!a.connected) status = '<span class="badge warn">Not connected</span>';
+  else if (running) status = '<span class="badge" style="color:var(--accent)">Syncing</span>';
+  else if (queued) status = '<span class="badge">Queued</span>';
+  else if (lr) status = `<span class="badge ${lr.status === 'success' ? 'ok' : 'bad'}">${esc(lr.status)}</span>`;
+  else status = '<span class="badge">Never run</span>';
+
+  let body = '';
+  if (running) body = `<div id="prog-${a.id}">${progress(cur)}</div>`;
+  else if (lr) body = `<div class="muted">Last run: ${fmtDate(lr.finished)} (${esc(lr.trigger)}) · ${lr.transfers} files, ${fmtBytes(lr.bytes)} downloaded, ${lr.deletes} removed, ${lr.checks} checked${lr.error ? `<br><span class="bad">${esc(lr.error)}</span>` : ''}</div>`;
+
+  const sch = a.schedule;
+  const when = sch.freq === 'daily' ? `Daily at ${sch.time}` : sch.freq === 'weekly' ? `Weekly on ${days[sch.weekday]} at ${sch.time}` : `Monthly on day ${sch.monthday} at ${sch.time}`;
+
+  return `<div class="card" id="acc-${a.id}">
+    <div class="row">
+      <div class="grow"><h2>${esc(a.name)} ${status}</h2>
+        <div class="muted">${esc(a.email || '')} → <code>${esc(a.destination)}</code></div></div>
+      ${a.connected ? `<button class="primary" onclick="runNow('${a.id}')" ${running || queued ? 'disabled' : ''}>Run now</button>` : `<button class="primary" onclick="connect('${a.id}')">Connect Google</button>`}
+      ${running ? `<button class="danger" onclick="cancelRun()">Cancel</button>` : ''}
+    </div>
+    ${body}
+    <div class="muted" style="margin-top:8px">${a.enabled ? esc(when) + (a.next_run ? ' · next: ' + fmtDate(a.next_run) : '') : 'Schedule paused'}</div>
+    <details><summary>Settings</summary>
+      <div class="row" style="margin-top:8px">
+        <select id="f-${a.id}" onchange="schedUI('${a.id}')">
+          ${['daily','weekly','monthly'].map(f => `<option ${f === sch.freq ? 'selected' : ''}>${f}</option>`).join('')}
+        </select>
+        <select id="w-${a.id}" class="${sch.freq === 'weekly' ? '' : 'hidden'}">${days.map((d, i) => `<option value="${i}" ${i === sch.weekday ? 'selected' : ''}>${d}</option>`).join('')}</select>
+        <select id="m-${a.id}" class="${sch.freq === 'monthly' ? '' : 'hidden'}">${Array.from({length: 28}, (_, i) => `<option ${i + 1 === sch.monthday ? 'selected' : ''}>${i + 1}</option>`).join('')}</select>
+        <input type="time" id="t-${a.id}" value="${sch.time}">
+        <label style="margin:0;display:flex;gap:6px;align-items:center"><input type="checkbox" id="e-${a.id}" ${a.enabled ? 'checked' : ''}> enabled</label>
+        <button onclick="saveSched('${a.id}')">Save</button>
+      </div>
+      ${a.connected ? `<div class="row" style="margin-top:10px"><div class="grow"><b>Folders:</b> ${a.folders.length ? a.folders.map(f => `<code>${esc(f)}</code>`).join(' ') : '<span class="muted">Entire Drive</span>'}</div><button onclick="openPicker('${a.id}')">Choose folders…</button></div>` : ''}
+      <div class="row" style="margin-top:10px">
+        ${a.connected ? `<button onclick="connect('${a.id}')">Re-connect Google</button>` : ''}
+        <button class="danger" onclick="del('${a.id}')">Delete account</button>
+        <span class="muted">Deleting keeps already-backed-up files on disk. Backup is an exact mirror: files removed from Drive are removed from the backup on the next run.</span>
+      </div>
+    </details>
+    <div id="auth-${a.id}"></div>
+  </div>`;
+}
+
+function progress(c) {
+  const scanning = !c.total_transfers && !c.bytes;
+  const pct = c.total_bytes ? Math.min(100, c.bytes / c.total_bytes * 100) : 0;
+  const label = scanning
+    ? `Comparing with Drive… ${c.checks}${c.total_checks ? ' / ' + c.total_checks : ''} files checked`
+    : `${pct.toFixed(1)}% · ${fmtBytes(c.bytes)} / ${fmtBytes(c.total_bytes)} · ${c.transfers} / ${c.total_transfers} files · ${fmtBytes(c.speed)}/s${c.eta != null ? ' · ETA ' + fmtEta(c.eta) : ''}`;
+  const files = c.transferring.map(t => esc(t.name)).slice(0, 3).join('<br>');
+  return `<div class="bar ${scanning ? 'indet' : ''}"><div style="width:${pct}%"></div></div>
+    <div class="muted">${label}${c.errors ? ` · <span class="bad">${c.errors} errors</span>` : ''}</div>
+    ${files ? `<div class="files">${files}</div>` : ''}
+    ${c.log.length ? `<pre>${esc(c.log.slice(-8).reverse().join('\n'))}</pre>` : ''}`;
+}
+
+window.schedUI = id => {
+  const f = $('#f-' + id).value;
+  $('#w-' + id).classList.toggle('hidden', f !== 'weekly');
+  $('#m-' + id).classList.toggle('hidden', f !== 'monthly');
+};
+window.saveSched = async id => {
+  try {
+    await api('/accounts/' + id, 'PATCH', { enabled: $('#e-' + id).checked, schedule: { freq: $('#f-' + id).value, time: $('#t-' + id).value, weekday: +$('#w-' + id).value, monthday: +$('#m-' + id).value } });
+    document.activeElement.blur(); refresh();
+  } catch (e) { alert(e.message); }
+};
+window.runNow = async id => { try { await api(`/accounts/${id}/run`, 'POST'); refresh(); } catch (e) { alert(e.message); } };
+window.cancelRun = async () => { await api('/cancel', 'POST'); refresh(); };
+window.del = async id => { if (confirm('Delete this account? Backed-up files stay on disk.')) { await api('/accounts/' + id, 'DELETE'); refresh(); } };
+window.connect = async id => {
+  const { url } = await api(`/accounts/${id}/auth-url`);
+  if (lastState.direct_oauth) { location.href = url; return; }
+  const box = $('#auth-' + id);
+  box.innerHTML = `<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+    <ol class="muted">
+      <li><a href="${url}" target="_blank" rel="noopener">Open Google sign-in</a> and approve read-only access.</li>
+      <li>Your browser will then land on a page that fails to load (<code>127.0.0.1:53682</code>). That's expected.</li>
+      <li>Copy the <b>entire URL</b> from the address bar and paste it here:</li>
+    </ol>
+    <input type="text" id="code-${id}" placeholder="http://127.0.0.1:53682/?state=...&code=...">
+    <div class="err" id="auth-err-${id}"></div>
+    <button class="primary" onclick="submitCode('${id}')">Finish</button></div>`;
+  box.querySelector('input').focus();
+};
+window.submitCode = async id => {
+  try { await api(`/accounts/${id}/auth-code`, 'POST', { code: $('#code-' + id).value }); document.activeElement.blur(); refresh(); }
+  catch (e) { $('#auth-err-' + id).textContent = e.message; }
+};
+
+
+let pick = null; // { id, selected:Set }
+const covered = p => [...pick.selected].some(x => p === x || p.startsWith(x + '/'));
+window.openPicker = async id => {
+  const a = lastState.accounts.find(x => x.id === id);
+  pick = { id, selected: new Set(a.folders) };
+  $('#modal').classList.remove('hidden');
+  $('#tree').innerHTML = '';
+  await loadKids('', $('#tree'));
+  updateCount();
+};
+window.closePicker = () => { $('#modal').classList.add('hidden'); pick = null; };
+window.savePicker = async () => {
+  try { await api('/accounts/' + pick.id, 'PATCH', { folders: [...pick.selected] }); closePicker(); lastSig = null; refresh(); }
+  catch (e) { alert(e.message); }
+};
+function updateCount() { $('#pick-count').textContent = pick.selected.size ? pick.selected.size + ' folder(s) selected' : 'Entire Drive'; }
+async function loadKids(path, container) {
+  container.innerHTML = '<div class="muted">Loading…</div>';
+  let names;
+  try { names = await api(`/accounts/${pick.id}/folders?path=${encodeURIComponent(path)}`); }
+  catch (e) { container.innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  container.innerHTML = names.length ? '' : '<div class="muted">No sub-folders</div>';
+  for (const name of names) {
+    const full = path ? path + '/' + name : name;
+    const node = document.createElement('div');
+    node.innerHTML = `<div class="node"><span class="twisty">▸</span><label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text);font-size:15px"><input type="checkbox"> ${esc(name)}</label></div><div class="kids hidden"></div>`;
+    const cb = node.querySelector('input'), tw = node.querySelector('.twisty'), kids = node.querySelector('.kids');
+    const sync = () => { const own = pick.selected.has(full); cb.checked = own || covered(full); cb.disabled = !own && covered(full); };
+    cb.onchange = () => {
+      if (cb.checked) { [...pick.selected].forEach(x => x.startsWith(full + '/') && pick.selected.delete(x)); pick.selected.add(full); }
+      else pick.selected.delete(full);
+      node.querySelectorAll('input').forEach(i => i._sync && i._sync()); updateCount();
+    };
+    cb._sync = sync; sync();
+    let loaded = false;
+    tw.onclick = async () => {
+      const open = kids.classList.toggle('hidden') === false;
+      tw.textContent = open ? '▾' : '▸';
+      if (open && !loaded) { loaded = true; await loadKids(full, kids); kids.querySelectorAll('input').forEach(i => i._sync && i._sync()); }
+    };
+    container.appendChild(node);
+  }
+}
+
+init();
+</script>
+</body>
+</html>

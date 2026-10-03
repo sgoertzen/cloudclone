@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>cloudclone</Name>
+  <Repository>CHANGE_ME/cloudclone:latest</Repository>
+  <Registry>https://hub.docker.com/</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Overview>Periodically mirrors Google Drive to your array (read-only, incremental via rclone). Web UI for Google sign-in, schedules (daily/weekly/monthly), manual runs and live progress. Supports multiple accounts.</Overview>
+  <Category>Backup: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true">8080</Config>
+  <Config Name="Backup Folder" Target="/backup" Default="/mnt/user/backup/cloudclone" Mode="rw" Description="Single folder for everything. The app creates Data/ (backed-up files, one sub-folder per account) and Config/ (settings and Google tokens) inside it." Type="Path" Display="always" Required="true">/mnt/user/backup/cloudclone</Config>
+  <Config Name="Public URL" Target="PUBLIC_URL" Default="" Mode="" Description="Optional. HTTPS address of this app via your reverse proxy, e.g. https://gdrive.example.com. Enables one-click Google sign-in (no copy/paste)." Type="Variable" Display="always" Required="false"></Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID that owns backed-up files (99 = nobody)" Type="Variable" Display="advanced" Required="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID (100 = users)" Type="Variable" Display="advanced" Required="false">100</Config>
+  <Config Name="UMASK" Target="UMASK" Default="002" Mode="" Description="File creation mask" Type="Variable" Display="advanced" Required="false">002</Config>
+  <Config Name="Timezone" Target="TZ" Default="UTC" Mode="" Description="Used for schedules, e.g. America/Denver" Type="Variable" Display="always" Required="false">UTC</Config>
+</Container>
