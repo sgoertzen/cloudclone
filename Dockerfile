@@ -15,3 +15,6 @@ ENV PUID=99 PGID=100 UMASK=002 TZ=UTC ROOT_DIR=/backup
 VOLUME ["/backup"]
 EXPOSE 8080
 ENTRYPOINT ["/entrypoint.sh"]
+
+LABEL net.unraid.docker.webui="http://[IP]:[PORT:8080]/"
+LABEL net.unraid.docker.icon="https://raw.githubusercontent.com/sgoertzen/cloudclone/main/cloudclone.png"

@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>cloudclone</Name>
-  <Repository>CHANGE_ME/cloudclone:latest</Repository>
-  <Registry>https://hub.docker.com/</Registry>
+  <Repository>ghcr.io/sgoertzen/cloudclone:latest</Repository>
+  <Registry>https://github.com/sgoertzen/cloudclone/pkgs/container/cloudclone</Registry>
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
