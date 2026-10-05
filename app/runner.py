@@ -39,6 +39,58 @@ def _glob_escape(path):
     return re.sub(r"([\\*?\[\]{}])", r"\\\1", path)
 
 
+def build_filter(folders):
+    """Contents of an rclone filter file that includes only `folders` (and everything under them)."""
+    lines = [f"+ /{_glob_escape(p)}/**" for p in folders]
+    lines.append("- *")
+    return "\n".join(lines) + "\n"
+
+
+def build_command(acc_id, dest, filter_path=None):
+    cmd = ["rclone", "sync", "gdrive:", dest, "--config", store.conf_path(acc_id), *RCLONE_FLAGS]
+    if filter_path:
+        cmd += ["--filter-from", filter_path]
+    return cmd
+
+
+def stats_update(st):
+    """Map an rclone `stats` object to the fields of the live progress dict."""
+    return dict(
+        bytes=st.get("bytes", 0), total_bytes=st.get("totalBytes", 0),
+        checks=st.get("checks", 0), total_checks=st.get("totalChecks", 0),
+        transfers=st.get("transfers", 0), total_transfers=st.get("totalTransfers", 0),
+        deletes=st.get("deletes", 0), errors=st.get("errors", 0),
+        speed=st.get("speed", 0), eta=st.get("eta"),
+        transferring=[
+            {"name": t.get("name"), "size": t.get("size", 0), "bytes": t.get("bytes", 0)}
+            for t in (st.get("transferring") or [])
+        ],
+    )
+
+
+_LOGGED_MSGS = ("Copied (new)", "Copied (replaced existing)", "Deleted")
+
+
+def log_text(msg):
+    """Text for the live log if this rclone JSON log line is worth showing, else None."""
+    if msg.get("level") in ("error", "warning") or msg.get("msg", "").endswith(_LOGGED_MSGS):
+        return f'{msg.get("object", "")}: {msg.get("msg", "")}'.strip(": ")
+    return None
+
+
+def final_outcome(cancelled, code, errors):
+    """(status, error) for a finished rclone process."""
+    if cancelled:
+        return "cancelled", "Cancelled by user"
+    if code == 0:
+        return "success", ""
+    return "failed", "; ".join(errors[-3:]) or f"rclone exited with code {code}"
+
+
+def start_worker():
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def enqueue(acc_id, trigger="manual"):
     """Queue a sync. Returns an error string, or None on success."""
     with _lock:
@@ -94,16 +146,14 @@ def _run(acc_id, trigger):
 
     dest = os.path.join(store.DATA_DIR, acc["folder"])
     os.makedirs(dest, exist_ok=True)
-    cmd = ["rclone", "sync", "gdrive:", dest, "--config", store.conf_path(acc_id), *RCLONE_FLAGS]
+    filt = None
     folders = acc.get("folders") or []
     if folders:
         # Only the chosen folders (and everything under them) are synced and, being a mirror, pruned.
         filt = store.conf_path(acc_id) + ".filter"
         with open(filt, "w") as f:
-            for p in folders:
-                f.write(f"+ /{_glob_escape(p)}/**\n")
-            f.write("- *\n")
-        cmd += ["--filter-from", filt]
+            f.write(build_filter(folders))
+    cmd = build_command(acc_id, dest, filt)
 
     with _lock:
         _cancel = False
@@ -124,31 +174,17 @@ def _run(acc_id, trigger):
         if "stats" in msg:
             st = last_stats = msg["stats"]
             with _lock:
-                _current.update(
-                    bytes=st.get("bytes", 0), total_bytes=st.get("totalBytes", 0),
-                    checks=st.get("checks", 0), total_checks=st.get("totalChecks", 0),
-                    transfers=st.get("transfers", 0), total_transfers=st.get("totalTransfers", 0),
-                    deletes=st.get("deletes", 0), errors=st.get("errors", 0),
-                    speed=st.get("speed", 0), eta=st.get("eta"),
-                    transferring=[
-                        {"name": t.get("name"), "size": t.get("size", 0), "bytes": t.get("bytes", 0)}
-                        for t in (st.get("transferring") or [])
-                    ],
-                )
-        elif msg.get("level") in ("error", "warning") or msg.get("msg", "").endswith(("Copied (new)", "Copied (replaced existing)", "Deleted")):
-            text = f'{msg.get("object", "")}: {msg.get("msg", "")}'.strip(": ")
-            with _lock:
-                _current["log"].append(text)
-            if msg.get("level") == "error":
-                errors.append(text)
+                _current.update(**stats_update(st))
+        else:
+            text = log_text(msg)
+            if text:
+                with _lock:
+                    _current["log"].append(text)
+                if msg.get("level") == "error":
+                    errors.append(text)
     code = _proc.wait()
 
-    if _cancel:
-        status_, error = "cancelled", "Cancelled by user"
-    elif code == 0:
-        status_, error = "success", ""
-    else:
-        status_, error = "failed", "; ".join(errors[-3:]) or f"rclone exited with code {code}"
+    status_, error = final_outcome(_cancel, code, errors)
     _finish(acc_id, trigger, started, status_, error, last_stats)
 
 
@@ -168,6 +204,3 @@ def _finish(acc_id, trigger, started, status_, error, stats):
     with _lock:
         _current = None
         _proc = None
-
-
-threading.Thread(target=_worker, daemon=True).start()

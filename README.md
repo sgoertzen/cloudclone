@@ -30,6 +30,18 @@ Create your own OAuth client once (the UI can save it as the default for all acc
 
 **Without `PUBLIC_URL`:** Google blocks redirects to LAN IPs, so create a **Desktop app** client instead. After approving, copy the URL of the failed `127.0.0.1:53682` page into the UI.
 
+## Running the tests
+The unit tests use pytest. They mock out rclone and Google, so they need neither installed nor any credentials, and they write only to temporary directories.
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+pytest
+```
+
+Run a single file or test with `pytest tests/test_store.py` or `pytest -k oauth`.
+
 ## Notes
 - Because it is an exact mirror, treat `Data/` as a copy, not an archive. If you want protection against accidental deletion in Drive, snapshot/back up `Data/` separately.
 - Exported Google Docs have no stable size, so rclone detects changes by modified time for those.

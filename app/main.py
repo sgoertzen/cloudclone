@@ -67,6 +67,7 @@ def _next_run(acc):
 
 @app.on_event("startup")
 def startup():
+    runner.start_worker()
     scheduler.start()
     for acc in store.state()["accounts"].values():
         reschedule(acc)

@@ -9,4 +9,5 @@ chown -R "$PUID:$PGID" "$CONFIG_DIR"
 umask "$UMASK"
 export HOME="$CONFIG_DIR"
 exec setpriv --reuid="$PUID" --regid="$PGID" --clear-groups \
-  python -m uvicorn main:app --host 0.0.0.0 --port 8080 --app-dir /srv
+  python -m uvicorn main:app --host 0.0.0.0 --port 8080 --app-dir /srv \
+  --log-level "${LOG_LEVEL:-warning}"
