@@ -17,4 +17,4 @@ EXPOSE 8080
 ENTRYPOINT ["/entrypoint.sh"]
 
 LABEL net.unraid.docker.webui="http://[IP]:[PORT:8080]/"
-LABEL net.unraid.docker.icon="https://raw.githubusercontent.com/sgoertzen/cloudclone/main/cloudclone.png"
+LABEL net.unraid.docker.icon="https://raw.githubusercontent.com/sgoertzen/cloudclone/main/app/static/assets/cloudclone.png"
