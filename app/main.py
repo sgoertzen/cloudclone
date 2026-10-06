@@ -90,8 +90,8 @@ def _next_run(acc):
 
 @app.on_event("startup")
 def startup():
-    log.info("CloudClone starting (data: %s, config: %s, redirect URI: %s)",
-             store.DATA_DIR, store.CONFIG_DIR, REDIRECT_URI)
+    log.info("CloudClone v%s starting (data: %s, config: %s, redirect URI: %s)",
+             VERSION, store.DATA_DIR, store.CONFIG_DIR, REDIRECT_URI)
     runner.start_worker()
     scheduler.start()
     accounts = store.state()["accounts"].values()
