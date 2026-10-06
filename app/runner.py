@@ -1,5 +1,6 @@
 """Runs rclone syncs one at a time and tracks live progress."""
 import json
+import logging
 import os
 import queue
 import re
@@ -22,6 +23,8 @@ RCLONE_FLAGS = [
     "--use-json-log",
     "-v",
 ]
+
+log = logging.getLogger("cloudclone.runner")
 
 _queue = queue.Queue()
 _lock = threading.Lock()
@@ -88,6 +91,7 @@ def final_outcome(cancelled, code, errors):
 
 
 def start_worker():
+    log.info("Starting sync worker")
     threading.Thread(target=_worker, daemon=True).start()
 
 
@@ -95,11 +99,14 @@ def enqueue(acc_id, trigger="manual"):
     """Queue a sync. Returns an error string, or None on success."""
     with _lock:
         if _current and _current["account_id"] == acc_id:
+            log.warning("Not queueing %s sync for account %s: already running", trigger, acc_id)
             return "Already running"
         if acc_id in _queued:
+            log.warning("Not queueing %s sync for account %s: already queued", trigger, acc_id)
             return "Already queued"
         _queued.append(acc_id)
     _queue.put((acc_id, trigger))
+    log.info("Queued %s sync for account %s", trigger, acc_id)
     return None
 
 
@@ -108,6 +115,7 @@ def cancel():
     with _lock:
         if _proc and _proc.poll() is None:
             _cancel = True
+            log.info("Terminating running rclone process")
             _proc.terminate()
             return True
     return False
@@ -131,6 +139,7 @@ def _worker():
         try:
             _run(acc_id, trigger)
         except Exception as e:  # never let the worker die
+            log.exception("Sync for account %s crashed", acc_id)
             _finish(acc_id, trigger, _now(), "failed", str(e), {})
 
 
@@ -138,9 +147,11 @@ def _run(acc_id, trigger):
     global _current, _proc, _cancel
     acc = store.get_account(acc_id)
     if not acc:
+        log.warning("Skipping %s sync: account %s no longer exists", trigger, acc_id)
         return
     started = _now()
     if not acc.get("connected"):
+        log.warning("Skipping %s sync for %s: account is not connected to Google", trigger, acc["name"])
         _finish(acc_id, trigger, started, "failed", "Account is not connected to Google", {})
         return
 
@@ -155,6 +166,8 @@ def _run(acc_id, trigger):
             f.write(build_filter(folders))
     cmd = build_command(acc_id, dest, filt)
 
+    log.info("Starting %s sync for %s -> %s%s", trigger, acc["name"], dest,
+             f" (folders: {', '.join(folders)})" if folders else "")
     with _lock:
         _cancel = False
         _current = {
@@ -170,6 +183,7 @@ def _run(acc_id, trigger):
         try:
             msg = json.loads(line)
         except ValueError:
+            log.warning("Unparseable rclone output (%s): %s", acc["name"], line.strip()[:200])
             continue
         if "stats" in msg:
             st = last_stats = msg["stats"]
@@ -178,6 +192,8 @@ def _run(acc_id, trigger):
         else:
             text = log_text(msg)
             if text:
+                if msg.get("level") == "error":
+                    log.error("rclone (%s): %s", acc["name"], text)
                 with _lock:
                     _current["log"].append(text)
                 if msg.get("level") == "error":
@@ -185,6 +201,14 @@ def _run(acc_id, trigger):
     code = _proc.wait()
 
     status_, error = final_outcome(_cancel, code, errors)
+    if status_ == "failed":
+        log.error("Sync for %s failed: %s", acc["name"], error)
+    elif status_ == "cancelled":
+        log.warning("Sync for %s was cancelled", acc["name"])
+    else:
+        log.info("Sync for %s finished: %s transferred, %s checked, %s deleted, %s bytes", acc["name"],
+                 last_stats.get("transfers", 0), last_stats.get("checks", 0),
+                 last_stats.get("deletes", 0), last_stats.get("bytes", 0))
     _finish(acc_id, trigger, started, status_, error, last_stats)
 
 
@@ -200,6 +224,8 @@ def _finish(acc_id, trigger, started, status_, error, stats):
     def apply(s):
         if acc_id in s["accounts"]:
             s["accounts"][acc_id]["last_run"] = result
+        else:
+            log.warning("Finished sync for account %s, which was deleted meanwhile", acc_id)
     store.update(apply)
     with _lock:
         _current = None

@@ -97,3 +97,10 @@ def test_delete_account_removes_state_and_conf():
     assert store.get_account(acc["id"]) is None
     assert not os.path.exists(store.conf_path(acc["id"]))
     store.delete_account(acc["id"])  # idempotent
+
+
+def test_delete_missing_conf_warns(caplog):
+    acc = store.new_account("A", "c", "s")  # conf file never written
+    with caplog.at_level("WARNING", logger="cloudclone.store"):
+        store.delete_account(acc["id"])
+    assert "already missing" in caplog.text

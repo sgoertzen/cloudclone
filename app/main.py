@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import secrets
 import re
@@ -18,6 +19,25 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import runner
 import store
+
+logging.basicConfig(level=os.environ.get("LOG_LEVEL", "warning").upper(),
+                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("cloudclone")
+
+
+class _QuietAccessLog(logging.Filter):
+    """The UI polls /api/state constantly; show those access lines only at DEBUG."""
+
+    def filter(self, record):
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and args[1] == "GET" and str(args[2]).split("?")[0] == "/api/state":
+            if logging.getLogger("uvicorn.access").getEffectiveLevel() > logging.DEBUG:
+                return False
+            record.levelno, record.levelname = logging.DEBUG, "DEBUG"
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_QuietAccessLog())
 
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
 # With PUBLIC_URL (e.g. https://gdrive.example.com behind your reverse proxy) Google redirects straight back to the app;
@@ -58,6 +78,7 @@ def reschedule(acc):
     if trig:
         scheduler.add_job(runner.enqueue, trig, args=[acc["id"], "scheduled"], id=job_id,
                           misfire_grace_time=3600, coalesce=True)
+        log.info("Scheduled %s sync for %s at %s", acc["schedule"]["freq"], acc["name"], acc["schedule"]["time"])
 
 
 def _next_run(acc):
@@ -67,10 +88,14 @@ def _next_run(acc):
 
 @app.on_event("startup")
 def startup():
+    log.info("CloudClone starting (data: %s, config: %s, redirect URI: %s)",
+             store.DATA_DIR, store.CONFIG_DIR, REDIRECT_URI)
     runner.start_worker()
     scheduler.start()
-    for acc in store.state()["accounts"].values():
+    accounts = store.state()["accounts"].values()
+    for acc in accounts:
         reschedule(acc)
+    log.info("Loaded %d account(s)", len(accounts))
 
 
 # ---- auth -----------------------------------------------------------------
@@ -91,6 +116,7 @@ def setup(body: Password, request: Request):
     if len(body.password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
     store.set_password(body.password)
+    log.info("Initial password set")
     request.session["auth"] = True
     return {"ok": True}
 
@@ -98,8 +124,10 @@ def setup(body: Password, request: Request):
 @app.post("/api/login")
 def login(body: Password, request: Request):
     if not store.check_password(body.password):
+        log.warning("Failed login attempt from %s", request.client.host if request.client else "unknown")
         raise HTTPException(401, "Wrong password")
     request.session["auth"] = True
+    log.info("Login from %s", request.client.host if request.client else "unknown")
     return {"ok": True}
 
 
@@ -166,7 +194,8 @@ def _disk():
     try:
         u = shutil.disk_usage(store.DATA_DIR)
         return {"free": u.free, "total": u.total}
-    except OSError:
+    except OSError as e:
+        log.warning("Could not read disk usage for %s: %s", store.DATA_DIR, e)
         return None
 
 
@@ -187,6 +216,7 @@ def create_account(body: AccountIn):
         store.update(lambda s: s.__setitem__("oauth_client", {"client_id": cid, "client_secret": secret}))
     acc = store.new_account(body.name.strip(), cid, secret, body.shared_drive_id.strip())
     store.write_rclone_conf(acc)
+    log.info("Account %s (%s) created", acc["id"], acc["name"])
     return _view(acc)
 
 
@@ -213,6 +243,7 @@ def update_account(acc_id: str, body: AccountUpdate):
     acc = store.get_account(acc_id)
     store.write_rclone_conf(acc)
     reschedule(acc)
+    log.info("Account %s (%s) updated", acc_id, acc["name"])
     return _view(acc)
 
 
@@ -227,8 +258,10 @@ def list_folders(acc_id: str, path: str = ""):
             ["rclone", "lsjson", f"gdrive:{path.strip('/')}", "--dirs-only", "--config", store.conf_path(acc_id)],
             capture_output=True, text=True, timeout=120)
     except subprocess.TimeoutExpired:
+        log.warning("Listing folders for account %s timed out", acc_id)
         raise HTTPException(504, "Google Drive took too long to respond")
     if p.returncode != 0:
+        log.error("rclone lsjson failed for account %s (exit %s): %s", acc_id, p.returncode, p.stderr.strip())
         raise HTTPException(502, p.stderr.strip().splitlines()[-1] if p.stderr.strip() else "rclone failed")
     return sorted((d["Name"] for d in json.loads(p.stdout)), key=str.lower)
 
@@ -241,6 +274,7 @@ def delete_account(acc_id: str):
     if scheduler.get_job(f"sync-{acc_id}"):
         scheduler.remove_job(f"sync-{acc_id}")
     store.delete_account(acc_id)  # backed-up files in /data are intentionally left in place
+    log.info("Account %s deleted (backed-up files left in place)", acc_id)
     return {"ok": True}
 
 
@@ -281,14 +315,20 @@ def _exchange(acc_id, code):
     if not code:
         raise HTTPException(400, "No authorization code found")
 
-    r = requests.post(TOKEN_URL, data={
-        "code": code, "client_id": acc["client_id"], "client_secret": acc["client_secret"],
-        "redirect_uri": REDIRECT_URI, "grant_type": "authorization_code",
-    }, timeout=30)
+    try:
+        r = requests.post(TOKEN_URL, data={
+            "code": code, "client_id": acc["client_id"], "client_secret": acc["client_secret"],
+            "redirect_uri": REDIRECT_URI, "grant_type": "authorization_code",
+        }, timeout=30)
+    except requests.RequestException as e:
+        log.error("Could not reach Google to exchange the code for account %s: %s", acc_id, e)
+        raise HTTPException(502, "Could not reach Google; try again")
     if r.status_code != 200:
+        log.warning("Google rejected the authorization code for account %s (HTTP %s)", acc_id, r.status_code)
         raise HTTPException(400, f"Google rejected the code: {r.json().get('error_description', r.text)}")
     tok = r.json()
     if not tok.get("refresh_token"):
+        log.warning("Google returned no refresh token for account %s", acc_id)
         raise HTTPException(400, "Google did not return a refresh token; remove the app's access at "
                                  "myaccount.google.com/permissions and try again")
     expiry = datetime.now(timezone.utc) + timedelta(seconds=tok.get("expires_in", 3600))
@@ -303,13 +343,14 @@ def _exchange(acc_id, code):
         me = requests.get("https://www.googleapis.com/drive/v3/about?fields=user",
                           headers={"Authorization": f"Bearer {tok['access_token']}"}, timeout=30).json()
         email = me.get("user", {}).get("emailAddress", "")
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("Could not look up the Google email for account %s: %s", acc_id, e)
 
     def apply(s):
         s["accounts"][acc_id].update(connected=True, email=email)
     store.update(apply)
     reschedule(store.get_account(acc_id))
+    log.info("Account %s connected to Google%s", acc_id, f" as {email}" if email else "")
     return _view(store.get_account(acc_id))
 
 
@@ -319,11 +360,14 @@ def oauth_callback(request: Request, code: str = "", state: str = "", error: str
     expected = request.session.pop("oauth_nonce", None)
     try:
         if error:
+            log.warning("OAuth callback returned error for account %s: %s", acc_id, error)
             raise HTTPException(400, f"Google returned: {error}")
         if not expected or not secrets.compare_digest(nonce, expected):
+            log.warning("OAuth callback with invalid state for account %s", acc_id)
             raise HTTPException(400, "Invalid OAuth state; start again from the app")
         _exchange(acc_id, code)
     except HTTPException as e:
+        log.warning("OAuth callback failed for account %s: %s", acc_id, e.detail)
         return HTMLResponse(f"<p>Connecting failed: {e.detail}</p><p><a href='/'>Back</a></p>", status_code=e.status_code)
     return RedirectResponse("/")
 
@@ -339,13 +383,17 @@ def run_now(acc_id: str):
         raise HTTPException(400, "Connect the Google account first")
     err = runner.enqueue(acc_id, "manual")
     if err:
+        log.warning("Manual run for account %s not queued: %s", acc_id, err)
         raise HTTPException(409, err)
+    log.info("Manual run queued for account %s", acc_id)
     return {"ok": True}
 
 
 @app.post("/api/cancel", dependencies=[Depends(require_auth)])
 def cancel():
-    return {"cancelled": runner.cancel()}
+    cancelled = runner.cancel()
+    log.info("Cancel requested (%s)", "sync stopping" if cancelled else "nothing running")
+    return {"cancelled": cancelled}
 
 
 @app.get("/")

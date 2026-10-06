@@ -337,3 +337,76 @@ def test_cancel_endpoint(authed):
 def test_index_served(client):
     r = client.get("/")
     assert r.status_code == 200 and "<html" in r.text.lower()
+
+
+# ---- logging ----------------------------------------------------------------
+
+def test_failed_login_is_logged_without_password(authed, caplog):
+    with caplog.at_level("WARNING", logger="cloudclone"):
+        authed.post("/api/login", json={"password": "hunter2-wrong"})
+    assert "Failed login attempt" in caplog.text
+    assert "hunter2-wrong" not in caplog.text
+
+
+def test_google_unreachable_returns_502_and_logs(authed, google, caplog):
+    post, _ = google
+    post.side_effect = main.requests.ConnectionError("down")
+    acc = make_account(authed)
+    with caplog.at_level("ERROR", logger="cloudclone"):
+        r = authed.post(f"/api/accounts/{acc['id']}/auth-code", json={"code": "c"})
+    assert r.status_code == 502
+    assert "Could not reach Google" in caplog.text
+
+
+def test_rejected_code_is_logged_without_secrets(authed, google, caplog):
+    post, _ = google
+    post.return_value = _token_response(400, {"error_description": "bad grant"})
+    acc = make_account(authed)
+    with caplog.at_level("WARNING", logger="cloudclone"):
+        authed.post(f"/api/accounts/{acc['id']}/auth-code", json={"code": "secret-code"})
+    assert "rejected the authorization code" in caplog.text
+    assert "secret-code" not in caplog.text and "sec" not in caplog.text.replace("secret", "")
+
+
+def _access_record(method="GET", path="/api/state"):
+    return main.logging.LogRecord("uvicorn.access", main.logging.INFO, "", 0,
+                                  '%s - "%s %s HTTP/%s" %d', ("1.2.3.4:5", method, path, "1.1", 200), None)
+
+
+def test_state_polling_hidden_unless_debug():
+    f, access = main._QuietAccessLog(), main.logging.getLogger("uvicorn.access")
+    old = access.level
+    try:
+        access.setLevel("INFO")
+        assert f.filter(_access_record()) is False
+        assert f.filter(_access_record(path="/api/state?x=1")) is False
+        assert f.filter(_access_record(path="/api/accounts")) is True
+        assert f.filter(_access_record(method="POST")) is True
+        access.setLevel("DEBUG")
+        rec = _access_record()
+        assert f.filter(rec) is True and rec.levelname == "DEBUG"
+    finally:
+        access.setLevel(old)
+
+
+def test_disk_error_logged(monkeypatch, caplog):
+    def boom(_):
+        raise OSError("gone")
+    monkeypatch.setattr(main.shutil, "disk_usage", boom)
+    with caplog.at_level("WARNING", logger="cloudclone"):
+        assert main._disk() is None
+    assert "Could not read disk usage" in caplog.text
+
+
+def test_callback_failure_logged(authed, caplog):
+    with caplog.at_level("WARNING", logger="cloudclone"):
+        authed.get("/oauth/callback", params={"error": "access_denied", "state": "abc.def"})
+    assert "OAuth callback failed for account abc" in caplog.text
+
+
+def test_major_events_logged_at_info(authed, caplog):
+    with caplog.at_level("INFO", logger="cloudclone"):
+        acc = make_account(authed, "Logged")
+        authed.delete(f"/api/accounts/{acc['id']}")
+    assert f"Account {acc['id']} (Logged) created" in caplog.text
+    assert f"Account {acc['id']} deleted" in caplog.text

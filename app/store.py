@@ -2,11 +2,14 @@
 import configparser
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
 import threading
 import uuid
+
+log = logging.getLogger("cloudclone.store")
 
 CONFIG_DIR = os.environ.get("CONFIG_DIR", "/config")
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
@@ -24,13 +27,16 @@ def _load():
     if _state is None:
         os.makedirs(RCLONE_DIR, exist_ok=True)
         if os.path.exists(STATE_FILE):
+            log.info("Loading state from %s", STATE_FILE)
             with open(STATE_FILE) as f:
                 _state = json.load(f)
         else:
+            log.info("No state file at %s; starting fresh", STATE_FILE)
             _state = {}
         _state.setdefault("accounts", {})
         if "secret_key" not in _state:
             _state["secret_key"] = secrets.token_hex(32)
+            log.info("Generated a new session secret key")
             _save()
     return _state
 
@@ -99,6 +105,7 @@ def new_account(name, client_id, client_secret, shared_drive_id=""):
         "last_run": None,
     }
     update(lambda s: s["accounts"].__setitem__(acc_id, acc))
+    log.info("Created account %s (%s)", acc_id, name)
     return acc
 
 
@@ -135,4 +142,5 @@ def delete_account(acc_id):
     try:
         os.remove(conf_path(acc_id))
     except FileNotFoundError:
-        pass
+        log.warning("rclone config for account %s was already missing on delete", acc_id)
+    log.info("Deleted account %s", acc_id)

@@ -200,3 +200,45 @@ def test_run_unknown_account_is_noop():
 def test_finish_ignores_deleted_account():
     runner._finish("gone", "manual", "t", "success", "", {})
     assert runner.status()["current"] is None
+
+
+def test_failed_sync_is_logged(monkeypatch, caplog):
+    acc_id = _connected_account()
+    _patch_popen(monkeypatch, [json.dumps({"level": "error", "object": "x", "msg": "denied"})], 1)
+    with caplog.at_level("ERROR", logger="cloudclone.runner"):
+        runner._run(acc_id, "manual")
+    assert "x: denied" in caplog.text
+    assert "Sync for Acct failed" in caplog.text
+
+
+def test_not_connected_is_logged(caplog):
+    acc = store.new_account("N", "c", "s")
+    with caplog.at_level("WARNING", logger="cloudclone.runner"):
+        runner._run(acc["id"], "scheduled")
+    assert "not connected" in caplog.text
+
+
+def test_unparseable_output_logged(monkeypatch, caplog):
+    acc_id = _connected_account()
+    _patch_popen(monkeypatch, ["garbage line"], 0)
+    with caplog.at_level("WARNING", logger="cloudclone.runner"):
+        runner._run(acc_id, "manual")
+    assert "Unparseable rclone output" in caplog.text
+
+
+def test_sync_lifecycle_logged_at_info(monkeypatch, caplog):
+    acc_id = _connected_account()
+    _patch_popen(monkeypatch, [json.dumps({"stats": {"transfers": 2}})], 0)
+    with caplog.at_level("INFO", logger="cloudclone.runner"):
+        runner.enqueue(acc_id)
+        runner._run(acc_id, "manual")
+    assert "Queued manual sync" in caplog.text
+    assert "Starting manual sync for Acct" in caplog.text
+    assert "finished: 2 transferred" in caplog.text
+
+
+def test_duplicate_enqueue_warns(caplog):
+    runner.enqueue("a")
+    with caplog.at_level("WARNING", logger="cloudclone.runner"):
+        runner.enqueue("a")
+    assert "already queued" in caplog.text
