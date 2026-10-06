@@ -70,7 +70,7 @@
         <summary>How to get a Client ID &amp; Secret (one-time, ~5 min)</summary>
         <ol class="muted">
           <li>Open <b><a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a></b>, create a project, and enable the <b>Google Drive API</b>.</li>
-          <li><b>OAuth consent screen</b>: choose External, add yourself as a test user, then <b>Publish app</b> to stay out of "Testing" (tokens in Testing expire after 7 days).</li>
+          <li><b><a href="https://console.cloud.google.com/auth/clients" target="_blank">Create OAuth Client</a></b>: choose Desktop application.</li>
           <li id="help-type"></li>
           <li>Paste the Client ID and Secret below. The container only ever requests <b>read-only</b> Drive access.</li>
         </ol>
@@ -89,7 +89,7 @@
   </div>
 </main>
 
-<div id="modal" class="hidden"><div class="box"><div><h2>Choose folders to back up</h2><div class="muted">Pick top-level or nested folders. Selecting a folder includes everything inside it. Leave nothing selected to back up the whole Drive.</div></div><div class="tree" id="tree"></div><div class="row"><span class="muted grow" id="pick-count"></span><button onclick="closePicker()">Cancel</button><button class="primary" onclick="savePicker()">Save</button></div></div></div>
+<div id="modal" class="hidden"><div class="box"><div><h2>Choose folders to back up</h2><div class="muted">Pick top-level or nested folders. Selecting a folder includes everything inside it; \"files only\" includes just the files directly in that folder. Leave nothing selected to back up the whole Drive.</div></div><div class="tree" id="tree"></div><div class="row"><span class="muted grow" id="pick-count"></span><button onclick="closePicker()">Cancel</button><button class="primary" onclick="savePicker()">Save</button></div></div></div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -265,6 +265,7 @@ window.openPicker = async id => {
   $('#modal').classList.remove('hidden');
   $('#tree').innerHTML = '';
   await loadKids('', $('#tree'));
+  addFilesOnly('', $('#tree'), 'Files in the root folder only', true);
   updateCount();
 };
 window.closePicker = () => { $('#modal').classList.add('hidden'); pick = null; };
@@ -273,6 +274,17 @@ window.savePicker = async () => {
   catch (e) { alert(e.message); }
 };
 function updateCount() { $('#pick-count').textContent = pick.selected.size ? pick.selected.size + ' folder(s) selected' : 'Entire Drive'; }
+function addFilesOnly(path, container, label, prepend) {
+  const key = path ? path + '/*' : '*';
+  const row = document.createElement('div');
+  row.className = 'node';
+  row.innerHTML = `<span class="twisty"></span><label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--muted);font-size:14px"><input type="checkbox"> ${label}</label>`;
+  const cb = row.querySelector('input');
+  cb._sync = () => { const own = pick.selected.has(key); cb.checked = own || covered(path); cb.disabled = !own && !!path && covered(path); };
+  cb.onchange = () => { cb.checked ? pick.selected.add(key) : pick.selected.delete(key); updateCount(); };
+  cb._sync();
+  prepend ? container.prepend(row) : container.appendChild(row);
+}
 async function loadKids(path, container) {
   container.innerHTML = '<div class="muted">Loading…</div>';
   let names;
@@ -285,17 +297,18 @@ async function loadKids(path, container) {
     node.innerHTML = `<div class="node"><span class="twisty">▸</span><label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text);font-size:15px"><input type="checkbox"> ${esc(name)}</label></div><div class="kids hidden"></div>`;
     const cb = node.querySelector('input'), tw = node.querySelector('.twisty'), kids = node.querySelector('.kids');
     const sync = () => { const own = pick.selected.has(full); cb.checked = own || covered(full); cb.disabled = !own && covered(full); };
+    const syncAll = () => node.querySelectorAll('input').forEach(i => i._sync && i._sync());
     cb.onchange = () => {
       if (cb.checked) { [...pick.selected].forEach(x => x.startsWith(full + '/') && pick.selected.delete(x)); pick.selected.add(full); }
       else pick.selected.delete(full);
-      node.querySelectorAll('input').forEach(i => i._sync && i._sync()); updateCount();
+      syncAll(); updateCount();
     };
     cb._sync = sync; sync();
     let loaded = false;
     tw.onclick = async () => {
       const open = kids.classList.toggle('hidden') === false;
       tw.textContent = open ? '▾' : '▸';
-      if (open && !loaded) { loaded = true; await loadKids(full, kids); kids.querySelectorAll('input').forEach(i => i._sync && i._sync()); }
+      if (open && !loaded) { loaded = true; await loadKids(full, kids); addFilesOnly(full, kids, 'files only', true); kids.querySelectorAll('input').forEach(i => i._sync && i._sync()); }
     };
     container.appendChild(node);
   }

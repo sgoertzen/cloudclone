@@ -43,8 +43,12 @@ def _glob_escape(path):
 
 
 def build_filter(folders):
-    """Contents of an rclone filter file that includes only `folders` (and everything under them)."""
-    lines = [f"+ /{_glob_escape(p)}/**" for p in folders]
+    """Contents of an rclone filter file that includes only `folders` (and everything under them).
+
+    An entry "*" or ending in "/*" ("Photos/*", or "*" for the Drive root) means only the files directly in that folder.
+    """
+    lines = [f"+ /{_glob_escape(p[:-1])}*" if p == "*" or p.endswith("/*") else f"+ /{_glob_escape(p)}/**"
+             for p in folders]
     lines.append("- *")
     return "\n".join(lines) + "\n"
 

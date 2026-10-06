@@ -26,6 +26,10 @@ def test_build_filter():
     assert runner.build_filter(["Photos", "Docs/2020*"]) == "+ /Photos/**\n+ /Docs/2020\\*/**\n- *\n"
 
 
+def test_build_filter_files_only():
+    assert runner.build_filter(["*", "Docs/*"]) == "+ /*\n+ /Docs/*\n- *\n"
+
+
 def test_build_command_with_and_without_filter():
     cmd = runner.build_command("abc", "/data/x")
     assert cmd[:4] == ["rclone", "sync", "gdrive:", "/data/x"]
