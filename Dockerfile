@@ -11,6 +11,8 @@ COPY app/ /srv/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
 ENV PUID=99 PGID=100 UMASK=002 TZ=UTC ROOT_DIR=/backup LOG_LEVEL=warning
 VOLUME ["/backup"]
 EXPOSE 8080

@@ -88,8 +88,9 @@
     </div>
   </div>
 </main>
+<footer class="muted" id="version" style="text-align:center;padding:16px"></footer>
 
-<div id="modal" class="hidden"><div class="box"><div><h2>Choose folders to back up</h2><div class="muted">Pick top-level or nested folders. Selecting a folder includes everything inside it; \"files only\" includes just the files directly in that folder. Leave nothing selected to back up the whole Drive.</div></div><div class="tree" id="tree"></div><div class="row"><span class="muted grow" id="pick-count"></span><button onclick="closePicker()">Cancel</button><button class="primary" onclick="savePicker()">Save</button></div></div></div>
+<div id="modal" class="hidden"><div class="box"><div><h2>Choose folders to back up</h2><div class="muted">Pick top-level or nested folders. Selecting a folder includes everything inside it; "files only" includes just the files directly in that folder. Leave nothing selected to back up the whole Drive.</div></div><div class="tree" id="tree"></div><div class="row"><span class="muted grow" id="pick-count"></span><button onclick="closePicker()">Cancel</button><button class="primary" onclick="savePicker()">Save</button></div></div></div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -139,6 +140,7 @@ $('#add-btn').onclick = async () => {
 
 async function refresh() {
   try { lastState = await api('/state'); } catch { return; }
+  $('#version').textContent = 'CloudClone v' + lastState.version;
   // Don't clobber a card while the user is typing in it.
   const hasDef = lastState.has_default_client;
   $('#creds').classList.toggle('hidden', hasDef && !$('#creds').dataset.forced);

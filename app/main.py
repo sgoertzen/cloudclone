@@ -47,6 +47,8 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 
+VERSION = os.environ.get("APP_VERSION", "dev")
+
 app = FastAPI(title="CloudClone")
 app.add_middleware(SessionMiddleware, secret_key=store.state()["secret_key"], same_site="lax", max_age=60 * 60 * 24 * 30)
 scheduler = BackgroundScheduler()
@@ -187,6 +189,7 @@ def get_state():
         "direct_oauth": bool(PUBLIC_URL),
         "has_default_client": bool(store.state().get("oauth_client")),
         "disk": _disk(),
+        "version": VERSION,
     }
 
 
