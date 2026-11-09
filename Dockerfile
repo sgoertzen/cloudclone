@@ -15,8 +15,8 @@ ARG APP_VERSION=dev
 ENV APP_VERSION=$APP_VERSION
 ENV PUID=99 PGID=100 UMASK=002 TZ=UTC ROOT_DIR=/backup LOG_LEVEL=info
 VOLUME ["/backup"]
-EXPOSE 8080
+EXPOSE 5550
 ENTRYPOINT ["/entrypoint.sh"]
 
-LABEL net.unraid.docker.webui="http://[IP]:[PORT:8080]/"
+LABEL net.unraid.docker.webui="http://[IP]:[PORT:5550]/"
 LABEL net.unraid.docker.icon="https://raw.githubusercontent.com/sgoertzen/cloudclone/main/app/static/assets/cloudclone.png"
