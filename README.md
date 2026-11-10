@@ -30,17 +30,39 @@ Create your own OAuth client once (the UI can save it as the default for all acc
 
 **Without `PUBLIC_URL`:** Google blocks redirects to LAN IPs, so create a **Desktop app** client instead. After approving, copy the URL of the failed `127.0.0.1:53682` page into the UI.
 
-## Running the tests
+## Running the unit tests
 The unit tests use pytest. They mock out rclone and Google, so they need neither installed nor any credentials, and they write only to temporary directories.
 
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
-pytest
+pytest tests/unit
 ```
 
-Run a single file or test with `pytest tests/test_store.py` or `pytest -k oauth`.
+Run a single file or test with `pytest tests/unit/test_store.py` or `pytest -k oauth`.
+
+## Running the integration tests
+The integration tests verify that the application correctly uses the configured port and other integration points. They can be run separately from unit tests.
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+pytest tests/integration
+```
+
+This will run all integration tests in the integration folder. Run a specific test with `pytest tests/integration/test_port.py::test_port_configuration_files_updated`.
+
+## Running all tests
+You can also run both unit and integration tests together:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+pytest tests/unit tests/integration
+```
 
 ## Notes
 - Because it is an exact mirror, treat `Data/` as a copy, not an archive. If you want protection against accidental deletion in Drive, snapshot/back up `Data/` separately.
