@@ -54,9 +54,14 @@ app.add_middleware(SessionMiddleware, secret_key=store.state()["secret_key"], sa
 scheduler = BackgroundScheduler()
 
 
-def require_auth(request: Request):
-    if not request.session.get("auth"):
+def current_user(request: Request):
+    user = store.get_user(request.session.get("user_id") or "")
+    if not user:
         raise HTTPException(401, "Not logged in")
+    return user
+
+
+require_auth = current_user
 
 
 # ---- scheduling -----------------------------------------------------------
@@ -102,40 +107,122 @@ def startup():
 
 # ---- auth -----------------------------------------------------------------
 
-class Password(BaseModel):
+class Credentials(BaseModel):
+    username: str
     password: str
+
+
+def _client_host(request):
+    return request.client.host if request.client else "unknown"
+
+
+def _check_username(username, exclude_id=None):
+    name = username.strip()
+    if not name:
+        raise HTTPException(400, "Username required")
+    if len(name) > 64:
+        raise HTTPException(400, "Username must be 64 characters or fewer")
+    other = store.find_user(name)
+    if other and other["id"] != exclude_id:
+        raise HTTPException(400, "A user with that username already exists")
+
+
+def _check_password(password):
+    if len(password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+
+
+def _user_view(user):
+    return {"id": user["id"], "username": user["username"]}
 
 
 @app.get("/api/session")
 def session(request: Request):
-    return {"configured": bool(store.state().get("password")), "authed": bool(request.session.get("auth"))}
+    user = store.get_user(request.session.get("user_id") or "")
+    return {"configured": bool(store.users()), "authed": bool(user),
+            "user": _user_view(user) if user else None}
 
 
 @app.post("/api/setup")
-def setup(body: Password, request: Request):
-    if store.state().get("password"):
+def setup(body: Credentials, request: Request):
+    if store.users():
         raise HTTPException(400, "Already configured")
-    if len(body.password) < 8:
-        raise HTTPException(400, "Password must be at least 8 characters")
-    store.set_password(body.password)
-    log.info("Initial password set")
-    request.session["auth"] = True
-    return {"ok": True}
+    _check_username(body.username)
+    _check_password(body.password)
+    user = store.new_user(body.username, body.password)
+    log.info("First user %s created", user["username"])
+    request.session["user_id"] = user["id"]
+    return _user_view(user)
 
 
 @app.post("/api/login")
-def login(body: Password, request: Request):
-    if not store.check_password(body.password):
-        log.warning("Failed login attempt from %s", request.client.host if request.client else "unknown")
-        raise HTTPException(401, "Wrong password")
-    request.session["auth"] = True
-    log.info("Login from %s", request.client.host if request.client else "unknown")
-    return {"ok": True}
+def login(body: Credentials, request: Request):
+    user = store.authenticate(body.username, body.password)
+    if not user:
+        log.warning("Failed login attempt from %s", _client_host(request))
+        raise HTTPException(401, "Wrong username or password")
+    request.session["user_id"] = user["id"]
+    log.info("Login by %s from %s", user["username"], _client_host(request))
+    return _user_view(user)
 
 
 @app.post("/api/logout")
 def logout(request: Request):
     request.session.clear()
+    return {"ok": True}
+
+
+# ---- users ----------------------------------------------------------------
+
+class UserUpdate(BaseModel):
+    username: str | None = None
+    password: str | None = None  # omitted or blank = keep the current password
+
+
+@app.get("/api/users", dependencies=[Depends(require_auth)])
+def list_users():
+    return sorted((_user_view(u) for u in store.users()), key=lambda u: u["username"].lower())
+
+
+@app.post("/api/users", dependencies=[Depends(require_auth)])
+def create_user(body: Credentials):
+    _check_username(body.username)
+    _check_password(body.password)
+    return _user_view(store.new_user(body.username, body.password))
+
+
+@app.get("/api/users/{user_id}", dependencies=[Depends(require_auth)])
+def get_user(user_id: str):
+    user = store.get_user(user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    return _user_view(user)
+
+
+@app.patch("/api/users/{user_id}", dependencies=[Depends(require_auth)])
+def update_user(user_id: str, body: UserUpdate):
+    if not store.get_user(user_id):
+        raise HTTPException(404, "User not found")
+    if body.username is not None:
+        _check_username(body.username, exclude_id=user_id)
+    password = body.password or None
+    if password is not None:
+        _check_password(password)
+    user = store.update_user(user_id, username=body.username, password=password)
+    log.info("User %s (%s) updated%s", user_id, user["username"], " (password changed)" if password else "")
+    return _user_view(user)
+
+
+@app.delete("/api/users/{user_id}")
+def delete_user(user_id: str, me: dict = Depends(current_user)):
+    user = store.get_user(user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    # Requests always come from a logged-in user, so this also guarantees at least one user remains.
+    if user_id == me["id"]:
+        raise HTTPException(400, "You can't delete your own account")
+    store.delete_user(user_id)
+    log.info("User %s (%s) deleted by %s", user_id, user["username"], me["username"])
     return {"ok": True}
 
 

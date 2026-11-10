@@ -37,12 +37,43 @@ def test_update_persists_and_returns_result():
     assert not os.path.exists(store.STATE_FILE + ".tmp")
 
 
-def test_password_roundtrip():
-    assert store.check_password("anything") is False  # none set yet
-    store.set_password("correct horse")
-    assert store.check_password("correct horse") is True
-    assert store.check_password("wrong") is False
-    assert "correct horse" not in store.state()["password"]
+def test_user_roundtrip():
+    assert store.users() == []
+    assert store.authenticate("alice", "anything") is None
+    user = store.new_user("  alice ", "correct horse")
+    assert user["username"] == "alice"
+    assert "correct horse" not in user["password"]
+    assert store.get_user(user["id"]) == user
+    assert store.find_user("ALICE") == user
+    assert store.authenticate("Alice", "correct horse") == user
+    assert store.authenticate("alice", "wrong") is None
+    assert store.authenticate("bob", "correct horse") is None
+
+
+def test_update_user():
+    uid = store.new_user("alice", "password1")["id"]
+    store.update_user(uid, username="alicia")
+    assert store.authenticate("alicia", "password1")
+    store.update_user(uid, password="password2")
+    assert store.authenticate("alicia", "password2")
+    assert not store.authenticate("alicia", "password1")
+
+
+def test_delete_user():
+    uid = store.new_user("alice", "password1")["id"]
+    store.delete_user(uid)
+    assert store.get_user(uid) is None
+    store.delete_user(uid)  # idempotent
+
+
+def test_legacy_password_migrates_to_admin_user():
+    with open(store.STATE_FILE, "w") as f:
+        json.dump({"secret_key": "abc", "accounts": {}, "password": store.hash_password("old secret")}, f)
+    assert "password" not in store.state()
+    assert [u["username"] for u in store.users()] == ["admin"]
+    assert store.authenticate("admin", "old secret")
+    with open(store.STATE_FILE) as f:
+        assert "password" not in json.load(f)  # migration persisted
 
 
 def test_hash_password_salted_and_deterministic_with_salt():

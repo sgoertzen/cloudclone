@@ -12,13 +12,18 @@ Unraid-friendly container that mirrors Google Drive to a local folder on a sched
 ## Build & run
 ```
 docker build -t cloudclone .
-docker run -d --name cloudclone -p 8080:8080 \
-  -v /mnt/user/backup/cloudclone:/backup \
+docker run -d --name cloudclone -p 5550:5550 \
+  -v ./backup:/backup \
   -e TZ=America/Denver cloudclone
 ```
 On Unraid, push the image to a registry, set `<Repository>` in `cloudclone.xml`, and copy the XML to `/boot/config/plugins/dockerMan/templates-user/` (or paste it via *Add Container → Template*).
 
 The single `/backup` mount holds `Data/` (the mirrored files, one sub-folder per account) and `Config/` (settings and Google tokens), both created automatically.
+
+## Users
+On first start the UI asks for a username and password, which creates the first user. Logged-in users can list, add, edit (rename, change password) and delete users on the **Users** page. All users have the same access; you can't delete your own account.
+
+Upgrading from a version with a single shared password: that password becomes a user named `admin`, so log in with `admin` and your old password.
 
 ## Connecting Google
 Create your own OAuth client once (the UI can save it as the default for all accounts):

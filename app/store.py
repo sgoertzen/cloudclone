@@ -1,4 +1,4 @@
-"""Persistent JSON state (accounts, schedules, password) plus rclone config helpers."""
+"""Persistent JSON state (accounts, schedules, users) plus rclone config helpers."""
 import configparser
 import hashlib
 import json
@@ -34,6 +34,9 @@ def _load():
             log.info("No state file at %s; starting fresh", STATE_FILE)
             _state = {}
         _state.setdefault("accounts", {})
+        _state.setdefault("users", {})
+        if "password" in _state:
+            _migrate_legacy_password()
         if "secret_key" not in _state:
             _state["secret_key"] = secrets.token_hex(32)
             log.info("Generated a new session secret key")
@@ -62,7 +65,17 @@ def update(fn):
         return result
 
 
-# ---- password -------------------------------------------------------------
+# ---- users --------------------------------------------------------------
+
+def _migrate_legacy_password():
+    """Older versions had one shared password; turn it into an `admin` user with the same password."""
+    legacy = _state.pop("password")
+    if not _state["users"]:
+        user_id = uuid.uuid4().hex[:8]
+        _state["users"][user_id] = {"id": user_id, "username": "admin", "password": legacy}
+        log.info("Migrated the legacy password to user 'admin'")
+    _save()
+
 
 def hash_password(password, salt=None):
     salt = salt or secrets.token_hex(16)
@@ -70,16 +83,53 @@ def hash_password(password, salt=None):
     return f"{salt}${h.hex()}"
 
 
-def check_password(password):
-    stored = state().get("password")
-    if not stored:
-        return False
+def _verify(password, stored):
     salt, _ = stored.split("$", 1)
     return secrets.compare_digest(hash_password(password, salt), stored)
 
 
-def set_password(password):
-    update(lambda s: s.__setitem__("password", hash_password(password)))
+def users():
+    return list(state()["users"].values())
+
+
+def get_user(user_id):
+    return state()["users"].get(user_id)
+
+
+def find_user(username):
+    """Look up a user by name, ignoring case and surrounding whitespace."""
+    name = username.strip().lower()
+    return next((u for u in users() if u["username"].lower() == name), None)
+
+
+def authenticate(username, password):
+    """The user if the username and password match, else None."""
+    user = find_user(username)
+    return user if user and _verify(password, user["password"]) else None
+
+
+def new_user(username, password):
+    user_id = uuid.uuid4().hex[:8]
+    user = {"id": user_id, "username": username.strip(), "password": hash_password(password)}
+    update(lambda s: s["users"].__setitem__(user_id, user))
+    log.info("Created user %s (%s)", user_id, user["username"])
+    return user
+
+
+def update_user(user_id, username=None, password=None):
+    def apply(s):
+        u = s["users"][user_id]
+        if username is not None:
+            u["username"] = username.strip()
+        if password is not None:
+            u["password"] = hash_password(password)
+        return u
+    return update(apply)
+
+
+def delete_user(user_id):
+    update(lambda s: s["users"].pop(user_id, None))
+    log.info("Deleted user %s", user_id)
 
 
 # ---- accounts -------------------------------------------------------------

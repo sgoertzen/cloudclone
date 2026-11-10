@@ -30,7 +30,7 @@ def client(monkeypatch):
 
 @pytest.fixture
 def authed(client):
-    assert client.post("/api/setup", json={"password": "password1"}).status_code == 200
+    assert client.post("/api/setup", json={"username": "admin", "password": "password1"}).status_code == 200
     return client
 
 
@@ -95,23 +95,81 @@ def test_schedule_valid():
 # ---- auth -------------------------------------------------------------------
 
 def test_session_states(client):
-    assert client.get("/api/session").json() == {"configured": False, "authed": False}
-    client.post("/api/setup", json={"password": "password1"})
-    assert client.get("/api/session").json() == {"configured": True, "authed": True}
+    assert client.get("/api/session").json() == {"configured": False, "authed": False, "user": None}
+    user = client.post("/api/setup", json={"username": "alice", "password": "password1"}).json()
+    assert client.get("/api/session").json() == {
+        "configured": True, "authed": True, "user": {"id": user["id"], "username": "alice"}}
 
 
-def test_setup_rejects_short_password_and_second_setup(client):
-    assert client.post("/api/setup", json={"password": "short"}).status_code == 400
-    assert client.post("/api/setup", json={"password": "password1"}).status_code == 200
-    assert client.post("/api/setup", json={"password": "password2"}).status_code == 400
+def test_setup_validation_and_second_setup(client):
+    assert client.post("/api/setup", json={"username": "a", "password": "short"}).status_code == 400
+    assert client.post("/api/setup", json={"username": "  ", "password": "password1"}).status_code == 400
+    assert client.post("/api/setup", json={"username": "a", "password": "password1"}).status_code == 200
+    assert client.post("/api/setup", json={"username": "b", "password": "password2"}).status_code == 400
+    assert [u["username"] for u in store.users()] == ["a"]
+
+
+def test_setup_stores_hash_not_password(client):
+    client.post("/api/setup", json={"username": "alice", "password": "password1"})
+    assert "password1" not in json.dumps(store.state())
 
 
 def test_login_logout(authed):
     authed.post("/api/logout")
     assert authed.get("/api/state").status_code == 401
-    assert authed.post("/api/login", json={"password": "nope"}).status_code == 401
-    assert authed.post("/api/login", json={"password": "password1"}).status_code == 200
+    assert authed.post("/api/login", json={"username": "admin", "password": "nope"}).status_code == 401
+    assert authed.post("/api/login", json={"username": "bob", "password": "password1"}).status_code == 401
+    assert authed.post("/api/login", json={"username": " ADMIN ", "password": "password1"}).status_code == 200
     assert authed.get("/api/state").status_code == 200
+
+
+def test_session_for_missing_user_is_rejected(authed):
+    store.update(lambda s: s["users"].clear())
+    assert authed.get("/api/state").status_code == 401
+    assert authed.get("/api/session").json()["authed"] is False
+
+
+# ---- users ------------------------------------------------------------------
+
+def test_list_and_create_users(authed):
+    r = authed.post("/api/users", json={"username": "bob", "password": "password2"})
+    assert r.status_code == 200 and r.json()["username"] == "bob"
+    assert "password" not in r.json()
+    users = authed.get("/api/users").json()
+    assert [u["username"] for u in users] == ["admin", "bob"]
+    assert all(set(u) == {"id", "username"} for u in users)
+
+    authed.post("/api/logout")
+    assert authed.post("/api/login", json={"username": "bob", "password": "password2"}).status_code == 200
+
+
+@pytest.mark.parametrize("body", [
+    {"username": "Admin", "password": "password2"},   # duplicate, case-insensitive
+    {"username": "", "password": "password2"},
+    {"username": "x" * 65, "password": "password2"},
+    {"username": "carol", "password": "short"},
+])
+def test_create_user_validation(authed, body):
+    assert authed.post("/api/users", json=body).status_code == 400
+
+
+def test_get_and_edit_user(authed):
+    uid = authed.post("/api/users", json={"username": "bob", "password": "password2"}).json()["id"]
+    assert authed.get(f"/api/users/{uid}").json() == {"id": uid, "username": "bob"}
+    assert authed.get("/api/users/nope").status_code == 404
+    assert authed.patch("/api/users/nope", json={"username": "x"}).status_code == 404
+
+    # Rename only; blank password keeps the old one.
+    assert authed.patch(f"/api/users/{uid}", json={"username": "robert", "password": ""}).json()["username"] == "robert"
+    assert store.authenticate("robert", "password2")
+    # Keeping one's own name (even recased) is fine; taking another user's is not.
+    assert authed.patch(f"/api/users/{uid}", json={"username": "Robert"}).status_code == 200
+    assert authed.patch(f"/api/users/{uid}", json={"username": "admin"}).status_code == 400
+    assert authed.patch(f"/api/users/{uid}", json={"password": "short"}).status_code == 400
+
+    assert authed.patch(f"/api/users/{uid}", json={"password": "newpassword"}).status_code == 200
+    assert not store.authenticate("Robert", "password2")
+    assert store.authenticate("Robert", "newpassword")
 
 
 @pytest.mark.parametrize("method,path", [
@@ -119,9 +177,34 @@ def test_login_logout(authed):
     ("delete", "/api/accounts/x"), ("get", "/api/accounts/x/folders"),
     ("get", "/api/accounts/x/auth-url"), ("post", "/api/accounts/x/auth-code"),
     ("post", "/api/accounts/x/run"), ("post", "/api/cancel"), ("get", "/oauth/callback"),
+    ("get", "/api/users"), ("post", "/api/users"), ("get", "/api/users/x"), ("patch", "/api/users/x"),
+    ("delete", "/api/users/x"),
 ])
 def test_endpoints_require_auth(client, method, path):
     assert getattr(client, method)(path).status_code == 401
+
+
+def test_delete_user(authed):
+    uid = authed.post("/api/users", json={"username": "bob", "password": "password2"}).json()["id"]
+    assert authed.delete(f"/api/users/{uid}").status_code == 200
+    assert [u["username"] for u in authed.get("/api/users").json()] == ["admin"]
+    assert authed.delete(f"/api/users/{uid}").status_code == 404
+    assert store.authenticate("bob", "password2") is None
+
+
+def test_cannot_delete_self(authed):
+    me = authed.get("/api/session").json()["user"]
+    r = authed.delete(f"/api/users/{me['id']}")
+    assert r.status_code == 400 and "own account" in r.json()["detail"]
+    assert store.get_user(me["id"])
+
+
+def test_deleted_user_session_is_logged_out(authed):
+    uid = authed.post("/api/users", json={"username": "bob", "password": "password2"}).json()["id"]
+    other = TestClient(main.app)
+    assert other.post("/api/login", json={"username": "bob", "password": "password2"}).status_code == 200
+    assert authed.delete(f"/api/users/{uid}").status_code == 200
+    assert other.get("/api/state").status_code == 401
 
 
 # ---- accounts ---------------------------------------------------------------
@@ -343,7 +426,7 @@ def test_index_served(client):
 
 def test_failed_login_is_logged_without_password(authed, caplog):
     with caplog.at_level("WARNING", logger="cloudclone"):
-        authed.post("/api/login", json={"password": "hunter2-wrong"})
+        authed.post("/api/login", json={"username": "admin", "password": "hunter2-wrong"})
     assert "Failed login attempt" in caplog.text
     assert "hunter2-wrong" not in caplog.text
 

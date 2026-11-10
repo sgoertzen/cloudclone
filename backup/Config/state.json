@@ -1,0 +1,16 @@
+{
+  "accounts": {},
+  "users": {
+    "b6f8b9d9": {
+      "id": "b6f8b9d9",
+      "username": "test",
+      "password": "30c7a34bc6eeb9fcc552d407feddc30c$e1444a13ff5e25a1bac517d7c49bdfbadba82717a7fefe77d28957a39df4575b7333fca975f3e1f961536f2cc3438a57bf06a2995acc56adfcf28d3e80ca43df"
+    },
+    "c9681240": {
+      "id": "c9681240",
+      "username": "test2",
+      "password": "645094a59f8a27780cb8145444a1c5f7$fca92dbcf0914995701566109982f2d3d82111ec392b757bae2485fa3e11b8d571afea8136051c00a9d624f9338dec3f4c2212fae012cd789406658ed50ce507"
+    }
+  },
+  "secret_key": "080062b21e4aa46436abe27c1254b796b699b51a400062a55f96d7cb94ba9903"
+}
